@@ -1,6 +1,6 @@
 // api/ik-auth.js
 // Vercel serverless function (ESM)
-
+import { randomBytes } from 'node:crypto'; 
 import ImageKit from 'imagekit';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
@@ -63,7 +63,7 @@ export default async function handler(req, res) {
     }
 
     const expire = Math.floor(Date.now() / 1000) + 60; // 60s
-    const token = crypto.randomUUID().replace(/-/g, '');
+    const token  = randomBytes(16).toString('hex');
     const authParams = ik.getAuthenticationParameters({ token, expire });
 
     return res.status(200).json(authParams);
