@@ -1,37 +1,45 @@
-// netlify/functions/ik-delete.js
-const ImageKit = require('imagekit');
-const { createRemoteJWKSet, jwtVerify } = require('jose');
+// ik-delete.js
+const ImageKit = require("imagekit");
+const { json, corsHeaders, verifyFirebaseIdToken } = require("./_shared");
 
-const { FIREBASE_PROJECT_ID, IMAGEKIT_PRIVATE_KEY, IMAGEKIT_PUBLIC_KEY, IMAGEKIT_URL_ENDPOINT } = process.env;
-const ISSUER = `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`;
-const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com'));
-
-async function verifyToken(idToken) {
-  if (!idToken) throw new Error('no-token');
-  const { payload } = await jwtVerify(idToken, JWKS, { issuer: ISSUER, audience: FIREBASE_PROJECT_ID });
-  return payload;
-}
-
-const ik = new ImageKit({ publicKey: IMAGEKIT_PUBLIC_KEY, privateKey: IMAGEKIT_PRIVATE_KEY, urlEndpoint: IMAGEKIT_URL_ENDPOINT });
+const imagekit = new ImageKit({
+  publicKey: process.env.IMAGEKIT_PUBLIC_KEY,
+  privateKey: process.env.IMAGEKIT_PRIVATE_KEY,
+  urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT,
+});
 
 exports.handler = async (event) => {
+  const origin = event.headers.origin || "";
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 204, headers: corsHeaders(origin), body: "" };
+  }
+
+  if (event.httpMethod !== "POST") {
+    return json(405, { error: "method-not-allowed" }, origin);
+  }
+
   try {
-    if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
-    const idToken = (event.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    const payload = await verifyToken(idToken);
-    const uid = payload.sub;
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const { uid } = await verifyFirebaseIdToken((event.queryStringParameters || {}).idToken, projectId);
 
-    const { fileId, filePath } = JSON.parse(event.body || '{}');
-    if (!fileId) return { statusCode: 400, body: JSON.stringify({ error:'bad-request', message:'Missing fileId [E-LIB-DEL-VAL-001]' }) };
+    const body = JSON.parse(event.body || "{}");
+    const fileId = body.fileId || "";
 
-    // Basic ownership check: path must be inside /users/<uid>
-    if (!filePath || !new RegExp(`^/?users/${uid}(/|$)`).test(filePath)) {
-      return { statusCode: 403, body: JSON.stringify({ error:'forbidden', message:'Not allowed to delete this file. [E-LIB-DEL-OWN-001]' }) };
+    if (!fileId) return json(400, { error: "missing-fileId" }, origin);
+
+    // Defensive ownership check: fetch details, ensure path belongs to users/<uid>
+    const details = await imagekit.getFileDetails(fileId);
+    const path = (details && (details.filePath || details.filePath || details.path)) || "";
+    const expectedPrefix = `/users/${uid}`;
+    if (!path.startsWith(expectedPrefix + "/") && path !== expectedPrefix) {
+      return json(403, { error: "forbidden", message: "Not your file." }, origin);
     }
 
-    await ik.deleteFile(fileId);
-    return { statusCode: 200, body: JSON.stringify({ ok: true }) };
-  } catch (_e) {
-    return { statusCode: 401, body: JSON.stringify({ error:'auth-failed', message:'Unable to delete file. [E-LIB-DEL-001]' }) };
+    await imagekit.deleteFile(fileId);
+    return json(200, { ok: true }, origin);
+  } catch (err) {
+    const code = err && err.message || "delete-error";
+    const status = code.startsWith("missing-id-token") ? 401 : 500;
+    return json(status, { error: code }, origin);
   }
 };
