@@ -16,8 +16,9 @@ exports.handler = async (event) => {
   try {
     const projectId = getProjectId();
     const idToken = extractIdTokenFromEvent(event);
-    const { uid } = await verifyFirebaseIdToken(idToken, projectId);
-
+    //const { uid } = await verifyFirebaseIdToken(idToken, projectId);
+    const { uid } = await verifyFirebaseIdToken(idToken, projectId, { origin });
+  
     const prefix = `users/${uid}`;
     const limit = Math.max(1, Math.min(Number(event.queryStringParameters?.limit || 30), 100));
 

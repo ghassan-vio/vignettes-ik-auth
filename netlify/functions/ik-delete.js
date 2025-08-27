@@ -20,8 +20,9 @@ exports.handler = async (event) => {
   try {
     const projectId = getProjectId();
     const idToken = extractIdTokenFromEvent(event);
-    const { uid } = await verifyFirebaseIdToken(idToken, projectId);
-
+    //const { uid } = await verifyFirebaseIdToken(idToken, projectId);
+    const { uid } = await verifyFirebaseIdToken(idToken, projectId, { origin });
+      
     let body = {};
     try { body = JSON.parse(event.body || "{}"); } catch (_) {}
     const fileId = body.fileId || "";

@@ -19,8 +19,8 @@ exports.handler = async (event) => {
   try {
     const projectId = getProjectId();
     const idToken = extractIdTokenFromEvent(event);
-    const { uid } = await verifyFirebaseIdToken(idToken, projectId);
-
+    //const { uid } = await verifyFirebaseIdToken(idToken, projectId);
+    const { uid } = await verifyFirebaseIdToken(idToken, projectId, { origin });
     // Count current files in the user's folder
     const folder = `users/${uid}`;
     let used = 0;
