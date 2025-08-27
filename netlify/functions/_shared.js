@@ -3,6 +3,11 @@
 const jose = require("jose");
 const crypto = require("crypto");
 
+// helper to detect local dev
+function isLocalOrigin(origin) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || "");
+}
+
 const ALLOWED_ORIGINS = new Set([
   "https://vignettes-io.web.app",
   "https://vignettes-io.firebaseapp.com",
@@ -47,18 +52,25 @@ function getProjectId() {
   );
 }
 
-async function verifyFirebaseIdToken(idToken, projectId) {
+async function verifyFirebaseIdToken(idToken, projectId, { origin } = {}) {
   if (!idToken) {
-    const e = new Error("missing-id-token");
-    e.code = "missing-id-token";
-    throw e;
+    const e = new Error("missing-id-token"); e.code = "missing-id-token"; throw e;
   }
   if (!projectId) {
-    const e = new Error("missing-project-id");
-    e.code = "missing-project-id";
-    throw e;
+    const e = new Error("missing-project-id"); e.code = "missing-project-id"; throw e;
   }
 
+  // Allow emulator tokens if explicitly enabled and coming from localhost
+  const allowEmu = process.env.ALLOW_EMULATOR_TOKENS === "1";
+  if (allowEmu && isLocalOrigin(origin)) {
+    // Emulator tokens can't be verified against Google JWKS; decode only.
+    const payload = jose.decodeJwt(idToken);
+    payload.uid = payload.user_id || payload.uid || payload.sub;
+    if (!payload.uid) { const e = new Error("invalid-id-token"); e.code = "invalid-id-token"; throw e; }
+    return payload;
+  }
+
+  // Normal prod verification against Google JWKS
   const ISSUER = `https://securetoken.google.com/${projectId}`;
   const AUD = projectId;
   const JWKS_URL = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
@@ -66,14 +78,10 @@ async function verifyFirebaseIdToken(idToken, projectId) {
 
   try {
     const { payload } = await jose.jwtVerify(idToken, JWKS, { issuer: ISSUER, audience: AUD });
-    // payload contains: user_id/uid, sub, email, etc.
     payload.uid = payload.user_id || payload.uid || payload.sub;
     return payload;
   } catch (err) {
-    const e = new Error("invalid-id-token");
-    e.code = "invalid-id-token";
-    e.cause = err;
-    throw e;
+    const e = new Error("invalid-id-token"); e.code = "invalid-id-token"; e.cause = err; throw e;
   }
 }
 
