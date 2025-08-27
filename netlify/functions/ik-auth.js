@@ -1,5 +1,7 @@
+// netlify/functions/ik-auth.js
+const crypto = require("crypto");
 const ImageKit = require("imagekit");
-const { json, corsHeaders, verifyFirebaseIdToken } = require("./_shared");
+const { json, corsHeaders, preflight, verifyFirebaseIdToken, extractIdTokenFromEvent, getProjectId } = require("./_shared");
 
 const imagekit = new ImageKit({
   publicKey:   process.env.IMAGEKIT_PUBLIC_KEY,
@@ -7,55 +9,48 @@ const imagekit = new ImageKit({
   urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT,
 });
 
-const MAX_FILES = 5;
+const MAX_FILES = Number(process.env.MAX_FILES || 5);
 
 exports.handler = async (event) => {
-  const origin = event.headers.origin || "";
-
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers: corsHeaders(origin), body: "" };
-  }
+  const origin = event.headers?.origin || "";
+  const pf = preflight(event);
+  if (pf) return pf;
 
   try {
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const idToken = (event.queryStringParameters && event.queryStringParameters.idToken) || "";
-    const verified = await verifyFirebaseIdToken(idToken, projectId);
-    const uid = verified.uid;
+    const projectId = getProjectId();
+    const idToken = extractIdTokenFromEvent(event);
+    const { uid } = await verifyFirebaseIdToken(idToken, projectId);
 
-    const folder = "users/" + uid;
-    const files = await imagekit.listFiles({ path: folder, limit: MAX_FILES + 1 });
-    const used = Array.isArray(files) ? files.length : 0;
-
-    if (used >= MAX_FILES) {
-      return json(
-        403,
-        { error: "quota-exceeded", message: "Trial limit reached (" + MAX_FILES + " images).", quota: { used: used, max: MAX_FILES } },
-        origin
-      );
+    // Count current files in the user's folder
+    const folder = `users/${uid}`;
+    let used = 0;
+    try {
+      const files = await imagekit.listFiles({ path: folder, limit: 100 });
+      used = Array.isArray(files) ? files.length : 0;
+    } catch (_) {
+      // If the folder doesn't exist yet, treat as zero
+      used = 0;
     }
 
-    const auth = imagekit.getAuthenticationParameters();
+    // Create short-lived upload auth for ImageKit JS SDK
+    const token = crypto.randomBytes(16).toString("hex");
+    const expire = Math.floor(Date.now() / 1000) + 60 * 5; // 5 minutes
+    const signature = crypto.createHmac("sha1", process.env.IMAGEKIT_PRIVATE_KEY).update(token + expire).digest("hex");
 
-    return json(
-      200,
-      {
-        token: auth.token,
-        expire: auth.expire,
-        signature: auth.signature,
-        folder: folder,
-        quota: { used: used, max: MAX_FILES },
-        publicKey: process.env.IMAGEKIT_PUBLIC_KEY,
-        urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT,
-      },
-      origin
-    );
+    return json(200, {
+      // Upload credentials
+      token, expire, signature,
+      // Client config
+      publicKey:   process.env.IMAGEKIT_PUBLIC_KEY,
+      urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT,
+      // Quota information for UI
+      used, limit: MAX_FILES,
+      // Where uploads should go
+      folder,
+    }, origin);
   } catch (err) {
-    const msg = String(err && err.message || "auth-error");
-    const status =
-      msg.indexOf("missing-id-token") !== -1 || msg.indexOf("no-kid") !== -1 || msg.indexOf("invalid-payload") !== -1
-        ? 401
-        : 500;
-
+    const msg = err?.code || err?.message || "server-error";
+    const status = msg === "missing-id-token" || msg === "invalid-id-token" ? 401 : 500;
     return json(status, { error: msg }, origin);
   }
 };
