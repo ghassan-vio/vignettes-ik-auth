@@ -1,10 +1,17 @@
-// netlify/functions/ik-delete.js
+// netlify/functions/ik-delete.js (cleaned)
+// Deletes an ImageKit file only if it belongs to the authenticated user (users/<uid>/...)
 const ImageKit = require("imagekit");
-const { json, corsHeaders, preflight, verifyFirebaseIdToken, extractIdTokenFromEvent, getProjectId } = require("./_shared");
+const {
+  json,
+  preflight,
+  verifyFirebaseIdToken,
+  extractIdTokenFromEvent,
+  getProjectId,
+} = require("./_shared");
 
 const imagekit = new ImageKit({
-  publicKey:   process.env.IMAGEKIT_PUBLIC_KEY,
-  privateKey:  process.env.IMAGEKIT_PRIVATE_KEY,
+  publicKey: process.env.IMAGEKIT_PUBLIC_KEY,
+  privateKey: process.env.IMAGEKIT_PRIVATE_KEY,
   urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT,
 });
 
@@ -20,20 +27,23 @@ exports.handler = async (event) => {
   try {
     const projectId = getProjectId();
     const idToken = extractIdTokenFromEvent(event);
-    //const { uid } = await verifyFirebaseIdToken(idToken, projectId);
     const { uid } = await verifyFirebaseIdToken(idToken, projectId, { origin });
-      
+
     let body = {};
     try { body = JSON.parse(event.body || "{}"); } catch (_) {}
     const fileId = body.fileId || "";
     if (!fileId) return json(400, { error: "missing-file-id" }, origin);
 
-    // Verify ownership by inspecting the file's path
+    // Fetch details and assert ownership
     const info = await imagekit.getFileDetails(fileId);
-    const filePath = info?.filePath || info?.path || "";
-    const prefix = `users/${uid}`;
-    if (!filePath || !filePath.startsWith(prefix)) {
-      return json(403, { error: "forbidden" }, origin);
+    let filePath = info?.filePath || info?.path || "";
+    if (!filePath) return json(404, { error: "file-not-found" }, origin);
+
+    // Normalize and verify prefix
+    filePath = String(filePath).replace(/^\/+/, ""); // strip leading slashes
+    const prefix = `users/${uid}/`; // strict match with trailing slash
+    if (!filePath.startsWith(prefix)) {
+      return json(403, { error: "forbidden", reason: "not-owner", filePath, expectedPrefix: prefix }, origin);
     }
 
     await imagekit.deleteFile(fileId);
