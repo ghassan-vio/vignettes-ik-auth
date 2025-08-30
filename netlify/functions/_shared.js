@@ -27,6 +27,8 @@ function corsHeaders(origin) {
     "Access-Control-Allow-Headers": "authorization, content-type, x-requested-with",
     "Vary": "Origin",
     "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
   };
 }
 
@@ -52,6 +54,16 @@ function getProjectId() {
   );
 }
 
+function extractIdTokenFromEvent(event) {
+  // Authorization: Bearer <token> OR ?idToken=
+  const h = event.headers || {};
+  const auth = h.authorization || h.Authorization || "";
+  if (/^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, "").trim();
+  const qs = event.queryStringParameters || {};
+  if (qs.idToken) return String(qs.idToken);
+  return "";
+}
+
 async function verifyFirebaseIdToken(idToken, projectId, { origin } = {}) {
   if (!idToken) {
     const e = new Error("missing-id-token"); e.code = "missing-id-token"; throw e;
@@ -66,38 +78,31 @@ async function verifyFirebaseIdToken(idToken, projectId, { origin } = {}) {
     // Emulator tokens can't be verified against Google JWKS; decode only.
     const payload = jose.decodeJwt(idToken);
     payload.uid = payload.user_id || payload.uid || payload.sub;
-    if (!payload.uid) { const e = new Error("invalid-id-token"); e.code = "invalid-id-token"; throw e; }
-    return payload;
+    if (!payload.uid) {
+      const e = new Error("invalid-id-token"); e.code = "invalid-id-token"; throw e;
+    }
+    return { uid: payload.uid, emulated: true };
   }
 
-  // Normal prod verification against Google JWKS
-  const ISSUER = `https://securetoken.google.com/${projectId}`;
-  const AUD = projectId;
-  const JWKS_URL = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
-  const JWKS = jose.createRemoteJWKSet(new URL(JWKS_URL));
-
-  try {
-    const { payload } = await jose.jwtVerify(idToken, JWKS, { issuer: ISSUER, audience: AUD });
-    payload.uid = payload.user_id || payload.uid || payload.sub;
-    return payload;
-  } catch (err) {
-    const e = new Error("invalid-id-token"); e.code = "invalid-id-token"; e.cause = err; throw e;
+  // Prod: verify signature and audience
+  const JWKS = jose.createRemoteJWKSet(new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"));
+  const { payload } = await jose.jwtVerify(idToken, JWKS, {
+    audience: projectId,
+    issuer: `https://securetoken.google.com/${projectId}`,
+  });
+  const uid = payload.user_id || payload.uid || payload.sub;
+  if (!uid) {
+    const e = new Error("invalid-id-token"); e.code = "invalid-id-token"; throw e;
   }
-}
-
-function extractIdTokenFromEvent(event) {
-  const hdr = event.headers?.authorization || event.headers?.Authorization || "";
-  const idFromHeader = hdr.startsWith("Bearer ") ? hdr.slice(7).trim() : "";
-  const idFromQuery = event.queryStringParameters?.idToken || "";
-  return idFromHeader || idFromQuery || "";
+  return { uid };
 }
 
 module.exports = {
-  ALLOWED_ORIGINS,
+  isLocalOrigin,
   corsHeaders,
   json,
   preflight,
-  verifyFirebaseIdToken,
   getProjectId,
   extractIdTokenFromEvent,
+  verifyFirebaseIdToken,
 };
