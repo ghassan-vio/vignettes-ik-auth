@@ -1,6 +1,6 @@
 // netlify/functions/ik-list.js
 const ImageKit = require("imagekit");
-const { json, corsHeaders, preflight, verifyFirebaseIdToken, extractIdTokenFromEvent, getProjectId } = require("./_shared");
+const { json, preflight, verifyFirebaseIdToken, extractIdTokenFromEvent, getProjectId } = require("./_shared");
 
 const imagekit = new ImageKit({
   publicKey:   process.env.IMAGEKIT_PUBLIC_KEY,
@@ -16,14 +16,17 @@ exports.handler = async (event) => {
   try {
     const projectId = getProjectId();
     const idToken = extractIdTokenFromEvent(event);
-    //const { uid } = await verifyFirebaseIdToken(idToken, projectId);
     const { uid } = await verifyFirebaseIdToken(idToken, projectId, { origin });
-  
-    const prefix = `users/${uid}`;
-    const limit = Math.max(1, Math.min(Number(event.queryStringParameters?.limit || 30), 100));
 
-    const files = await imagekit.listFiles({ path: prefix, limit });
+    const q = event.queryStringParameters || {};
+    const qType = String(q.type || "image").toLowerCase();
+    const type = qType === "video-thumb" ? "video-thumb" : "image";
 
+    // List everything under the user's *type* subtree (not the whole user folder)
+    const base = type === "image" ? `users/${uid}/images` : `users/${uid}/video-thumbs`;
+    const limit = Math.max(1, Math.min(Number(q.limit || 60), 200));
+
+    const files = await imagekit.listFiles({ path: base, limit });
     const items = (files || []).map(f => ({
       fileId:    f.fileId,
       name:      f.name,
@@ -35,7 +38,7 @@ exports.handler = async (event) => {
       createdAt: f.createdAt,
     }));
 
-    return json(200, { items }, origin);
+    return json(200, { items, type }, origin);
   } catch (err) {
     const msg = err?.code || err?.message || "server-error";
     const status = msg === "missing-id-token" || msg === "invalid-id-token" ? 401 : 500;
