@@ -31,9 +31,9 @@ exports.handler = async (event) => {
       ? `users/${uid}/images/`
       : `users/${uid}/video-thumbs/`;
 
+    // Use path parameter instead of searchQuery with LIKE
     const files = await imagekit.listFiles({
-      // return everything under users/<uid>/(images|video-thumbs)/... recursively
-      searchQuery: `path LIKE "${base}%"`,
+      path: base.replace(/\/$/, ""), // Remove trailing slash for path parameter
       sort: "DESC_CREATED",
       limit,
     });
