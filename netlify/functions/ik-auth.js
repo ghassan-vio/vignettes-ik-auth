@@ -59,11 +59,10 @@ exports.handler = async (event) => {
       token, expire, signature,
       publicKey:   process.env.IMAGEKIT_PUBLIC_KEY,
       urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT,
-
+      uploadEndpoint: "https://upload.imagekit.io/api/v1/files/upload",
       // Where to upload *this* item, plus a handy map for the client
       folder,
       folders,
-
       // Per-type quota snapshot (UI-only; true enforcement lives in Firestore quotas)
       used, limit, type,
     }, origin);
