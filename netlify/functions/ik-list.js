@@ -6,7 +6,7 @@ const {
 } = require("./_shared");
 
 const imagekit = new ImageKit({
-  publicKey:  process.env.IMAGEKIT_PUBLIC_KEY,
+  publicKey: process.env.IMAGEKIT_PUBLIC_KEY,
   privateKey: process.env.IMAGEKIT_PRIVATE_KEY,
   urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT,
 });
@@ -21,30 +21,31 @@ exports.handler = async (event) => {
     const idToken = extractIdTokenFromEvent(event);
     const { uid } = await verifyFirebaseIdToken(idToken, projectId, { origin });
 
-    const q     = event.queryStringParameters || {};
+    const q = event.queryStringParameters || {};
     const qType = String(q.type || "image").toLowerCase();
-    const type  = qType === "video-thumb" ? "video-thumb" : "image";
+    const type = qType === "video-thumb" ? "video-thumb" : "image";
 
     // List everything under the user's *type* subtree (recursively)
     const limit = Math.max(1, Math.min(Number(q.limit || 60), 200));
-    const base  = type === "image"
+    const base = type === "image"
       ? `users/${uid}/images/`
       : `users/${uid}/video-thumbs/`;
 
     const files = await imagekit.listFiles({
-      searchQuery: `path STARTS_WITH "${base}"`,
+      // return everything under users/<uid>/(images|video-thumbs)/... recursively
+      searchQuery: `path LIKE "${base}%"`,
       sort: "DESC_CREATED",
-      limit
+      limit,
     });
 
     const items = (files || []).map(f => ({
-      fileId:    f.fileId,
-      name:      f.name,
-      filePath:  f.filePath || f.path || "",
-      url:       f.url,
+      fileId: f.fileId,
+      name: f.name,
+      filePath: f.filePath || f.path || "",
+      url: f.url,
       thumbnail: f.thumbnailUrl,
-      size:      f.size,
-      mime:      f.mime || f.mimeType || "",
+      size: f.size,
+      mime: f.mime || f.mimeType || "",
       createdAt: f.createdAt,
     }));
 
